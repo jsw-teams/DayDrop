@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>取回文件 · 1 天有效</title>
+    <meta name="description" content="输入 6 位口令取回临时文件，上传与下载均需人机验证。" />
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <style>
+      /* —— 高对比主题 —— */
+      :root{
+        --bg:#0b0c0f;         /* 壁纸不可用时的底色 */
+        --text:#f8fafc;       /* 主文本（深色模式） */
+        --card:#111317;       /* 卡片背景 */
+        --muted:#cbd5e1;      /* 次要文字 */
+        --border:#374151;     /* 可见边框 */
+        --btn:#e5e7eb;        /* 按钮底 */
+        --btn-ink:#0b0c0f;    /* 按钮字色 */
+        --bg-image:none;      /* 将被 JS 设置为 url(...) */
+        --bg-filter:brightness(0.45) saturate(1.15); /* 壁纸滤镜，保证前景可读 */
+      }
+      @media (prefers-color-scheme: light){
+        :root{
+          --bg:#0b0f14;
+          --text:#0b1220;
+          --card:#ffffff;
+          --muted:#475569;
+          --border:#1f2937;
+          --btn:#0f172a;
+          --btn-ink:#ffffff;
+          --bg-filter:brightness(0.75) saturate(1.1);
+        }
+      }
+
+      html,body{height:100%}
+      body{
+        margin:0;background:var(--bg);color:var(--text);
+        font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial;
+        -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;
+        position:relative;
+      }
+      /* 全屏壁纸层（在最底，前景内容清晰） */
+      body::before{
+        content:""; position:fixed; inset:0; z-index:-1;
+        background: center/cover no-repeat var(--bg);
+        background-image: var(--bg-image);
+        filter: var(--bg-filter);
+        will-change: transform;
+      }
+
+      a{color:inherit;text-decoration:none}
+      .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
+      .skip{position:absolute;left:-9999px}
+      .skip:focus{left:16px;top:12px;padding:8px 12px;background:var(--card);color:var(--text);border-radius:10px;box-shadow:0 1px 2px rgba(0,0,0,.4)}
+
+      header{display:flex;align-items:center;gap:12px;padding:16px}
+      .upload-link{display:inline-flex;align-items:center;gap:8px;padding:10px 12px;border:2px solid var(--border);border-radius:12px;background:var(--card)}
+      .upload-link:focus-visible{outline:3px solid currentColor;outline-offset:2px}
+      .brand{font-weight:800;letter-spacing:.2px;font-size:clamp(18px,2.6vw,22px);color:var(--text)}
+
+      main{display:grid;place-items:start center;padding:clamp(16px,3vw,32px)}
+      .wrap{width:min(720px,100%)}
+      .card{
+        background:var(--card);border:2px solid var(--border);border-radius:18px;
+        padding:clamp(18px,2.5vw,26px);box-shadow:0 2px 8px rgba(0,0,0,.22)
+      }
+      h1{
+        color:var(--text) !important;            /* ← 确保 H1 高对比显示 */
+        text-shadow:0 1px 0 rgba(0,0,0,.28);     /* 轻阴影提升可读 */
+        font-size:clamp(24px,3.5vw,34px);line-height:1.2;margin:0 0 14px;text-align:center;
+      }
+
+      label{display:block;margin-bottom:6px;font-weight:700}
+      input[type="text"]{
+        width:13ch;padding:14px 16px;border:2px solid var(--border);border-radius:12px;
+        font-size:clamp(18px,4vw,22px);letter-spacing:2px;background:transparent;color:inherit
+      }
+      input[type="text"]:focus-visible{outline:3px solid currentColor;outline-offset:2px}
+      .help{color:var(--muted);font-size:14px}
+
+      button{padding:12px 16px;border-radius:12px;border:0;background:var(--btn);color:var(--btn-ink);font-weight:800}
+      button[disabled]{opacity:.6;cursor:not-allowed}
+      button:focus-visible{outline:3px solid currentColor;outline-offset:2px}
+
+      .container{display:grid;gap:16px}
+      .msg{min-height:1.6em}
+      .ok{color:#22c55e}.err{color:#ef4444}
+      .footer{color:var(--muted);font-size:13px;text-align:center;margin-top:12px}
+
+      @media (forced-colors: active){.upload-link,.card,input[type="text"]{border:1px solid CanvasText}}
+      @media (prefers-reduced-motion: reduce){*{animation:none !important;transition:none !important}}
+    </style>
+  </head>
+  <body>
+    <a class="skip" href="#main">跳到主要内容</a>
+    <header>
+      <!-- 左上角上传入口（Alt+Shift+U） -->
+      <a class="upload-link" href="/upload.html" aria-label="上传文件" accesskey="u" title="上传文件 (Alt+Shift+U)">
+        <svg aria-hidden="true" focusable="false" width="20" height="20" viewBox="0 0 24 24" role="img">
+          <path fill="currentColor" d="M12 3l4 4h-3v6h-2V7H8l4-4zm-7 14h14v2H5v-2z"/>
+        </svg>
+        <span class="sr-only">上传</span>
+      </a>
+      <div class="brand" aria-hidden="true">临时文件</div>
+    </header>
+
+    <main id="main">
+      <div class="wrap">
+        <h1>取回文件（1 天有效）</h1>
+        <section class="card">
+          <form id="fetchForm" class="container" novalidate>
+            <div>
+              <label for="code">6 位口令</label>
+              <input id="code" name="code" type="text"
+                     inputmode="numeric" pattern="[0-9]{6}" maxlength="6"
+                     placeholder="例如 184263" aria-describedby="codeHelp"
+                     aria-required="true" autocomplete="one-time-code" />
+              <div id="codeHelp" class="help">仅数字，输入后按回车即可。</div>
+            </div>
+
+            <div><div id="cf" aria-label="人机验证"></div></div>
+
+            <div><button id="submitBtn" type="submit">验证并下载</button></div>
+
+            <div id="msg" class="msg" role="status" aria-live="polite"></div>
+          </form>
+        </section>
+        <p class="footer">上传成功会返回 6 位口令。对方输入口令并通过验证即可下载；文件 24 小时后自动删除。</p>
+      </div>
+    </main>
+
+    <script>
+      // —— 随机壁纸：/?bg=off 关闭；或 /?bg=<url> 自定义
+      (function setRandomWallpaper(){
+        try{
+          const q = new URLSearchParams(location.search);
+          const off = q.get('bg') === 'off';
+          const custom = q.get('bg') && q.get('bg') !== 'off' ? q.get('bg') : null;
+          if (off) return;
+          const seed = Math.floor(Math.random()*1e6);
+          const url = custom || `https://picsum.photos/1920/1080?random=${seed}`;
+          document.documentElement.style.setProperty('--bg-image', `url("${url}")`);
+        }catch(e){}
+      })();
+
+      // —— Turnstile：拿到 sitekey 后再渲染，避免空白
+      fetch('/api/config').then(r=>r.json()).then(cfg => {
+        const paint = () => window.turnstile && window.turnstile.render('#cf', { sitekey: cfg.turnstileSiteKey });
+        if (window.turnstile) paint(); else addEventListener('load', paint);
+      }).catch(()=>{});
+
+      const form = document.getElementById('fetchForm');
+      const codeInput = document.getElementById('code');
+      const msg = document.getElementById('msg');
+      const submitBtn = document.getElementById('submitBtn');
+
+      // 输入时即归一化：移除非数字，最多 6 位
+      window.setTimeout(()=>{ codeInput?.focus(); }, 0);
+      codeInput.addEventListener('input', () => {
+        const v = codeInput.value.replace(/\D/g, '').slice(0,6);
+        if (v !== codeInput.value) codeInput.value = v;
+      });
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+
+        // 再次归一化，确保提交的是干净数字
+        const norm = (codeInput.value || '').replace(/\D/g, '').slice(0,6);
+        if (norm.length !== 6) {
+          codeInput.setAttribute('aria-invalid','true');
+          msg.textContent = '请输入 6 位数字口令';
+          msg.className = 'msg err';
+          codeInput.focus();
+          return;
+        } else codeInput.removeAttribute('aria-invalid');
+
+        msg.textContent = '校验中…';
+        msg.className = 'msg';
+        submitBtn.disabled = true;
+        form.setAttribute('aria-busy','true');
+
+        try {
+          const fd = new FormData(form);
+          fd.set('code', norm); // 用规整后的值覆盖
+          const res = await fetch('/api/fetch', { method: 'POST', body: fd });
+
+          if (res.ok) {
+            const disp = res.headers.get('Content-Disposition') || '';
+            const m = disp.match(/filename\*=UTF-8''([^;]+)|filename="([^"]+)"/);
+            const filename = decodeURIComponent(m?.[1] || m?.[2] || 'download');
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+            URL.revokeObjectURL(url);
+            msg.textContent = `已开始下载：${filename}`;
+            msg.className = 'msg ok';
+            form.reset();
+          } else {
+            const data = await res.json().catch(()=>({}));
+            throw new Error(data.error || `下载失败（HTTP ${res.status}）`);
+          }
+        } catch (err) {
+          msg.textContent = err.message || '下载失败';
+          msg.className = 'msg err';
+        } finally {
+          submitBtn.disabled = false;
+          form.removeAttribute('aria-busy');
+          if (window.turnstile) turnstile.reset();
+        }
+      });
+    </script>
+  </body>
+</html>
