@@ -1,24 +1,18 @@
-// functions/_middleware.ts
+// functions/_middleware.js
 // -------------------------------------------------------------
-// 访问控制中间件（Cloudflare Pages Functions）
-// - 地区封禁：451（RFC 7725 合规；优先级最高；内联渲染）
-// - ASN 黑名单：403
-// - UA 白名单：仅允许国际浏览器（Chrome/Chromium、Edge、Firefox、Safari、Opera）
-// - 真实浏览器信号校验：要求常见 Client Hints / Fetch Metadata 等头；否则 403
-// - 无调试/本地放行：策略默认生效
-//
-// 法律条文参考（gov.cn 官方页）：
-// • 《互联网信息服务管理办法》：https://www.gov.cn/gongbao/content/2000/content_60531.htm
-// • 《公安机关互联网安全监督检查规定》：https://www.gov.cn/zhengce/2021-12/25/content_5712883.htm
+// SEO & PageSpeed friendly + Aggressive hotlink protection (Hexo)
+// - Country 451 (inline, gov.cn law links) > ASN 403 > UA/signal 403
+// - UA whitelist: international browsers only
+// - Crawlers & lab tools: bypass anti-bot signals (allow crawl & tests)
+// - Critical SEO paths: always allow
+// - Hexo subresources: same-origin (Sec-Fetch-Site+Referer) OR explicit CDN allowlist
 // -------------------------------------------------------------
-
-type Env = Record<string, never>;
 
 const LAW_LINK_IISMB = 'https://www.gov.cn/gongbao/content/2000/content_60531.htm';
-const LAW_LINK_PSP = 'https://www.gov.cn/zhengce/2021-12/25/content_5712883.htm';
+const LAW_LINK_PSP  = 'https://www.gov.cn/zhengce/2021-12/25/content_5712883.htm';
 
 const BLOCKED_COUNTRIES = new Set(['CN', 'HK', 'MO']);
-const BLOCKED_ASNS = new Set<number>([
+const BLOCKED_ASNS = new Set([
   34947,37963,45102,45103,45104,59028,59051,59052,59053,59054,59055,134963,211914,
   45090,132203,132591,133478,137876,
   55990,61348,63655,63727,131444,136907,139124,139144,140723,141180,149167,200756,
@@ -30,8 +24,39 @@ const BLOCKED_ASNS = new Set<number>([
 
 const ALLOW_SAMSUNG_INTERNET = false;
 
-/** —— 国际浏览器允许列表（先过 UA，再验真实浏览器信号） ———————— */
-function isInternationalBrowserUA(ua: string): boolean {
+/** External CDNs you trust (hostname only) */
+const ALLOWED_EXTERNAL_ORIGINS = new Set([
+  // 'cdn.jsdelivr.net',
+  // 'cdnjs.cloudflare.com',
+  // 'fonts.gstatic.com',
+]);
+
+/** Critical SEO paths: always allow */
+function isCriticalSEOPath(pathname) {
+  if (pathname === '/robots.txt') return true;
+  if (/^\/sitemap.*\.xml$/i.test(pathname)) return true;     // /sitemap.xml /sitemap-xxx.xml
+  if (/^\/(atom|rss|feed)\.xml$/i.test(pathname)) return true;
+  if (pathname === '/favicon.ico' || pathname === '/manifest.json') return true;
+  if (pathname.startsWith('/.well-known/')) return true;     // acme-challenge, security.txt, etc.
+  return false;
+}
+
+/** Crawlers (allow) */
+function isCrawlerUA(ua) {
+  if (!ua) return false;
+  ua = ua.toLowerCase();
+  return /(googlebot|google-InspectionTool|adsbot-google|mediapartners-google|bingbot|bingpreview|duckduckbot|baiduspider|yandex(bot|images|mobilebot)|applebot|petalbot|bytespider|facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|semrushbot|ahrefs(bot)?|mj12bot|dotbot|siteauditbot|screaming frog|seznambot)/i.test(ua);
+}
+
+/** Lab / performance tools (allow) */
+function isLabToolUA(ua) {
+  if (!ua) return false;
+  ua = ua.toLowerCase();
+  return /(lighthouse|chrome-lighthouse|pagespeed|google page speed|webpagetest|gtmetrix|pingdom|speedcurve|sitespeed\.io|calibreapp)/i.test(ua);
+}
+
+/* ---------- UA helpers ---------- */
+function isInternationalBrowserUA(ua) {
   if (!ua) return false;
   if (isDomesticOrCustomizedUA(ua)) return false;
   ua = ua.toLowerCase();
@@ -47,24 +72,19 @@ function isInternationalBrowserUA(ua: string): boolean {
     /\bversion\/\d+(?:\.\d+)*.*\bsafari\/\d+/i.test(ua) &&
     !/\b(?:chrome|crios|edg\w*|opr|opios)\//i.test(ua);
   const isSamsung = /\bsamsungbrowser\/\d+/i.test(ua);
-  return (
-    isEdge || isChromeLike || isOpera || isFirefox || isSafari ||
-    (ALLOW_SAMSUNG_INTERNET && isSamsung)
-  );
+  return isEdge || isChromeLike || isOpera || isFirefox || isSafari ||
+         (ALLOW_SAMSUNG_INTERNET && isSamsung);
 }
 
-/** —— 国产/定制/容器/CLI UA 显式拒绝（可按需补充） ———————————— */
-function isDomesticOrCustomizedUA(ua: string): boolean {
-  if (!ua) return true; // 空 UA 直接拒绝
+function isDomesticOrCustomizedUA(ua) {
+  if (!ua) return true;
   const s = ua.toLowerCase();
   const patterns = [
-    // 国产/聚合
     /\bucbrowser\/|\buc\s?applewebkit/i,
     /\bqqbrowser\/|\bmqqbrowser\/|\bqq\/\d/i,
     /\b2345explorer\/|\bmaxthon\/|\btheworld\/|\blbbrowser\/|\bmetasr\/|\bse\s?360|360se|360ee/i,
     /\bsogou(mobile)?browser\/|\bmetasr/i,
     /\bbaiduboxapp\/|\bbaidubrowser\/|\bbdapp/i,
-    // OEM/ROM
     /\bmiuibrowser\/|\bxiaomi\/|\bmi\s?browser/i,
     /\bhuaweibrowser\/|\bhonorbrowser\/|\bpetal(search)?\/|\bharmony/i,
     /\boppobrowser\/|\bheytapbrowser\/|\brealmebrowser\//i,
@@ -73,161 +93,166 @@ function isDomesticOrCustomizedUA(ua: string): boolean {
     /\boneplus(?:browser)?\//i,
     /\bztebrowser\/|\bnubia\w*browser\//i,
     /\bhisensebrowser\//i,
-    // 容器/平台内
     /\bquark(?:browser)?\/|\baliapp\(/i,
     /\btoutiaomicroapp\/|\bbytedance|aweme|douyin/i,
     /\bmicromessenger\/|\bwxwork\/|\bwechatdevtools\//i,
-    // 命令行/SDK
     /\bcurl\/|\bwget\/|\bhttpie\/|\bpostman(?:runtime|agent)?\/|\baxios\/|\bpython-requests\/|\bgo-http-client\/|\bokhttp\/|\bjava\/|\bnode-fetch\//i
   ];
   return patterns.some((re) => re.test(s));
 }
 
-/** —— 看起来像“真实浏览器”的请求信号（对抗 itdog/脚本伪装） ———— */
-function isLikelyNavigation(req: Request): boolean {
+/* ---------- Resource / navigation detection ---------- */
+function isLikelyNavigation(req) {
+  const u = new URL(req.url);
   const accept = req.headers.get('accept') || '';
   const dest = (req.headers.get('sec-fetch-dest') || '').toLowerCase();
+  const mode = (req.headers.get('sec-fetch-mode') || '').toLowerCase();
   const isHtmlAccept = accept.includes('text/html');
   const isDocDest = dest === 'document' || dest === 'empty';
-  const isRoot = new URL(req.url).pathname === '/';
-  return isHtmlAccept || isDocDest || isRoot;
+  const looksLikeHtmlPath = u.pathname === '/' || u.pathname.endsWith('.html') || !/\.[a-z0-9]+$/i.test(u.pathname);
+  return (isHtmlAccept && isDocDest && looksLikeHtmlPath) || mode === 'navigate';
 }
 
-function hasBrowserSignals(req: Request): boolean {
-  const h = req.headers;
+function isHexoAssetPath(pathname) {
+  if (pathname.startsWith('/css/') || pathname.startsWith('/js/') || pathname.startsWith('/images/') || pathname.startsWith('/img/') || pathname.startsWith('/assets/')) return true;
+  if (/\.(css|js|mjs|map|png|jpg|jpeg|webp|gif|svg|ico|woff2?|ttf|otf)$/.test(pathname)) return true;
+  if (/\/(sitemap|atom|rss|feed)\.xml$/.test(pathname)) return true;
+  if (/\/search\.json$/.test(pathname)) return true;
+  return false;
+}
 
-  // 基本要求：Accept + Accept-Language + User-Agent 存在
-  const accept = h.get('accept');
-  const lang = h.get('accept-language');
-  const ua = h.get('user-agent');
-  if (!accept || !lang || !ua) return false;
+/* ---------- Aggressive hotlink checks ---------- */
+function originOf(urlStr) { if (!urlStr) return null; try { return new URL(urlStr).origin; } catch { return null; } }
+function hostnameOf(urlStr) { if (!urlStr) return null; try { return new URL(urlStr).hostname; } catch { return null; } }
 
-  // Client Hints（Chromium 系列普遍具备；Firefox/Safari 可能较少，但会有 fetch 元数据）
-  const chUa = h.get('sec-ch-ua');
-  const chMobile = h.get('sec-ch-ua-mobile');
-  const chPlat = h.get('sec-ch-ua-platform');
+function isAllowedSubresourceAggressive(req) {
+  const url = new URL(req.url);
+  const pathname = url.pathname;
+  const fetchSite = (req.headers.get('sec-fetch-site') || '').toLowerCase();
+  const referer = req.headers.get('referer') || '';
+  const refererOrigin = originOf(referer);
+  const reqOrigin = url.origin;
+  const host = url.hostname;
 
-  // Fetch Metadata（Chromium 系列常见；Firefox/Safari 可能缺）
-  const sfSite = h.get('sec-fetch-site');       // 'none' | 'same-origin' | 'cross-site'
-  const sfMode = h.get('sec-fetch-mode');       // 'navigate' | 'no-cors' | ...
-  const sfDest = h.get('sec-fetch-dest');       // 'document' | 'empty' | ...
-  const uir = h.get('upgrade-insecure-requests'); // '1' 多见于顶级导航
+  if (!isHexoAssetPath(pathname)) return false;
 
-  // 规则：导航/HTML 请求更严格；非导航请求略宽松
-  const nav = isLikelyNavigation(req);
+  if (ALLOWED_EXTERNAL_ORIGINS.has(host)) return true;
 
-  const hasAnyClientHints = !!(chUa || chMobile || chPlat);
-  const hasFetchMeta = !!(sfSite && sfMode && sfDest);
+  if (fetchSite !== 'same-origin') return false;
 
-  // 1) 导航：必须具备 Fetch Metadata 且 uir=1（符合大多数真实浏览器）
-  if (nav) {
-    if (!hasFetchMeta) return false;
-    if (uir !== '1') return false;
-    // sec-fetch-mode 应为 navigate，dest 为 document/empty 较合理
-    if (sfMode && sfMode !== 'navigate') return false;
-    if (sfDest && !(sfDest === 'document' || sfDest === 'empty')) return false;
-    return true;
-  }
-
-  // 2) 非导航：至少具备 Client Hints 或 Fetch Metadata 之一
-  if (!hasAnyClientHints && !hasFetchMeta) return false;
+  if (!refererOrigin) return false;
+  if (refererOrigin !== reqOrigin) return false;
 
   return true;
 }
 
-/** —— 451 内联页面 ————————————————————————————— */
-function render451HTML(country?: string): string {
+/* ---------- 451 rendering ---------- */
+function render451HTML(country) {
   const title = '451 Unavailable For Legal Reasons';
-  const legalCN = `
-    <section>
-      <h2>无法访问（法律原因）</h2>
-      <p>根据适用法律法规与监管要求，来自您所在地区的访问已被限制。</p>
-      <div style="padding:.75rem 1rem;border-left:3px solid #304a7a;background:#0f1626">
-        <p><strong>《互联网信息服务管理办法》</strong>
-        (<a href="${LAW_LINK_IISMB}" target="_blank" rel="noopener">gov.cn</a>) — 互联网信息服务提供者应依法履行管理义务；禁止信息应依法处理，接受部门监督检查。</p>
-        <p><strong>《公安机关互联网安全监督检查规定》</strong>
-        (<a href="${LAW_LINK_PSP}" target="_blank" rel="noopener">gov.cn</a>) — 公安机关依法对互联网服务提供者开展安全监督检查；对违法信息或安全隐患可要求整改或采取措施。</p>
-      </div>
-    </section>`;
   return `<!doctype html>
-<html lang="zh-CN">
-<head>
-<meta charset="utf-8">
-<title>${title}</title>
-<style>
-  body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:#0b1220;color:#e6ecff;padding:2rem}
-  main{max-width:820px;margin:auto}
-  .card{background:#121a2b;border:1px solid #1f2a44;border-radius:16px;padding:24px}
-  a{color:#9ec1ff}
-</style>
-</head>
-<body>
-<main>
-  <div class="card">
-    <h1>${title}</h1>
-    <p>Unavailable For Legal Reasons</p>
-    <p>Country: ${country || 'N/A'}</p>
-    ${legalCN}
-  </div>
-</main>
-</body>
-</html>`;
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title>
+<style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;background:#0b1220;color:#e6ecff;padding:2rem}main{max-width:820px;margin:auto}.card{background:#121a2b;border:1px solid #1f2a44;border-radius:16px;padding:24px}a{color:#9ec1ff}</style></head><body>
+<main><div class="card"><h1>${title}</h1><p>Unavailable For Legal Reasons</p><p>Country: ${country||'N/A'}</p>
+<div style="padding:.75rem 1rem;border-left:3px solid #304a7a;background:#0f1626">
+<p><strong>《互联网信息服务管理办法》</strong> (<a href="${LAW_LINK_IISMB}" target="_blank" rel="noopener">gov.cn</a>)</p>
+<p><strong>《公安机关互联网安全监督检查规定》</strong> (<a href="${LAW_LINK_PSP}" target="_blank" rel="noopener">gov.cn</a>)</p>
+</div></div></main></body></html>`;
 }
 
-function respond451Inline(country?: string, method?: string) {
-  const headers: HeadersInit = {
+function respond451Inline(country, method) {
+  const headers = {
     'Content-Type': 'text/html; charset=utf-8',
     'Link': `<${LAW_LINK_IISMB}>; rel="related", <${LAW_LINK_PSP}>; rel="related"`,
     'Cache-Control': 'no-store',
-    'Vary': 'User-Agent, Accept, Accept-Language, Sec-CH-UA, Sec-CH-UA-Mobile, Sec-CH-UA-Platform, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, CF-IPCountry, cf-ipcountry, cf-asn',
+    'Vary': 'User-Agent, Accept, Accept-Language, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, CF-IPCountry, cf-ipcountry, cf-asn',
     'X-Policy-Decision': '451-country'
   };
-  if (country) (headers as any)['X-Blocked-Country'] = country;
+  if (country) headers['X-Blocked-Country'] = country;
   if (method && method.toUpperCase() === 'HEAD') return new Response(null, { status: 451, headers });
   return new Response(render451HTML(country), { status: 451, headers });
 }
 
-function txt(body: string, status = 403, extra: HeadersInit = {}) {
+function txt(body, status = 403, extra = {}) {
   return new Response(body + '\n', {
     status,
     headers: {
       'Content-Type': 'text/plain; charset=utf-8',
       'Cache-Control': 'no-store',
-      'Vary': 'User-Agent, Accept, Accept-Language, Sec-CH-UA, Sec-CH-UA-Mobile, Sec-CH-UA-Platform, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, CF-IPCountry, cf-ipcountry, cf-asn',
+      'Vary': 'User-Agent, Accept, Accept-Language, Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, CF-IPCountry, cf-ipcountry, cf-asn',
       'X-Policy-Decision': String(status),
       ...extra
     }
   });
 }
 
-export const onRequest: PagesFunction<Env> = async (ctx) => {
+/* ---------- Main handler ---------- */
+export const onRequest = async (ctx) => {
   const { request } = ctx;
-  const cf: any = (request as any).cf || {};
+  const url = new URL(request.url);
+  const pathname = url.pathname;
+  const cf = request.cf || {};
   const country = cf.country || request.headers.get('CF-IPCountry') || undefined;
   const asn = Number(cf.asn);
+  const ua = request.headers.get('User-Agent') || '';
 
-  // 1) 地区封禁 → 451（优先级最高）
+  // 0) Always-allow critical SEO paths
+  if (isCriticalSEOPath(pathname)) {
+    return ctx.next();
+  }
+
+  // 1) Country-based block -> 451
   if (country && BLOCKED_COUNTRIES.has(country)) {
     return respond451Inline(country, request.method);
   }
 
-  // 2) ASN 黑名单 → 403
+  // 2) ASN blacklist -> 403
   if (Number.isFinite(asn) && BLOCKED_ASNS.has(asn)) {
     return txt('Forbidden (ASN blocked)', 403, { 'X-Blocked-ASN': String(asn) });
   }
 
-  // 3) UA 白名单（国际浏览器）→ 再做“真实浏览器信号”校验
-  const ua = request.headers.get('User-Agent') || '';
+  // 3) Crawlers & Lab tools: allow (so SEO & PageSpeed/Lighthouse work)
+  const crawler = isCrawlerUA(ua);
+  const labTool = isLabToolUA(ua);
+  if (crawler || labTool) {
+    return ctx.next();
+  }
+
+  // 4) UA whitelist (international browsers)
   if (!isInternationalBrowserUA(ua)) {
     return txt('Forbidden (browser not allowed)', 403, { 'X-UA': ua.slice(0, 160) });
   }
 
-  // 4) 真实浏览器信号校验（关键：防止海外 itdog 拿到 200）
-  if (!hasBrowserSignals(request)) {
-    return txt('Forbidden (missing browser signals)', 403, {
-      'X-UA': ua.slice(0, 160)
-    });
+  // 5) Navigation (HTML page): require navigation signals (kept to filter synthetic scripts)
+  const isNav = isLikelyNavigation(request);
+  if (isNav) {
+    const h = request.headers;
+    const sfSite = h.get('sec-fetch-site');
+    const sfMode = h.get('sec-fetch-mode');
+    const sfDest = h.get('sec-fetch-dest');
+    const uir = h.get('upgrade-insecure-requests');
+    if (!sfSite || !sfMode || !sfDest || uir !== '1' ||
+        sfMode.toLowerCase() !== 'navigate' ||
+        !['document','empty'].includes((sfDest||'').toLowerCase())) {
+      return txt('Forbidden (missing navigation signals)', 403, { 'X-UA': ua.slice(0,160) });
+    }
+    return ctx.next();
   }
 
-  return ctx.next();
+  // 6) Subresources: aggressive hotlink protection (Hexo)
+  if (isHexoAssetPath(pathname)) {
+    // crawlers/lab already bypassed; here enforce hotlink rules for normal traffic
+    if (!isAllowedSubresourceAggressive(request)) {
+      return txt('Forbidden (hotlink blocked)', 403);
+    }
+    return ctx.next();
+  }
+
+  // 7) Other requests: be conservative (require same-origin)
+  const sfSite = (request.headers.get('sec-fetch-site') || '').toLowerCase();
+  const referer = request.headers.get('referer') || '';
+  const refOrigin = originOf(referer);
+  if (sfSite === 'same-origin' && refOrigin === url.origin) {
+    return ctx.next();
+  }
+  return txt('Forbidden (cross-site request blocked)', 403);
 };
