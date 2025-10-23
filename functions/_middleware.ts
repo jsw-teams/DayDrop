@@ -1,18 +1,13 @@
 // functions/_middleware.ts
 // -------------------------------------------------------------
 // 访问控制中间件（Cloudflare Pages Functions）
-// - 地区封禁：451（RFC 7725 合规）
+// - 地区封禁：451（RFC 7725 合规；优先级最高）
 // - ASN 黑名单：403
-// - UA 白名单：对所有请求生效
-//   • 支持「程序化客户端」例外（curl/wget/自定义 UA 等）
-//   • 支持「路径」例外（healthz/.well-known/内部 API 等）
+// - UA 白名单：仅放行“国际浏览器”（桌面 + 手机）
+//   • 允许：Chrome/Chromium、Edge、Firefox、Safari、Opera（含 iOS/Android 变体）
+//   • 明确拒绝：国产/定制浏览器、命令行/SDK、未知/空 UA 等 => 403
 //
-// 参考标准：
-// • RFC 7725 (§3, §4): 451 用于因合法要求拒绝访问；应返回 Link: <URI>; rel="blocked-by"
-//   https://datatracker.ietf.org/doc/html/rfc7725
-//
-// 相关法条（示例，便于在说明页引用；非法律意见）：
-// • 《中华人民共和国网络安全法》：第1、10、50、58条（关于网络安全义务、处置/阻断措施等）
+// 参考标准：RFC 7725 (§3, §4) — 451 返回应包含 Link: <URI>; rel="blocked-by"
 // -------------------------------------------------------------
 
 type Env = {
@@ -20,8 +15,8 @@ type Env = {
 };
 
 /** 你的法条/透明度说明页（请替换为实际地址） */
-const LEGAL_LINK_CN = 'https://www.gov.cn/gongbao/content/2000/content_60531.htm';   // 针对 CN/HK/MO 的中文说明页
-const LEGAL_LINK_GENERIC = 'https://www.gov.cn/zhengce/2021-12/25/content_5712883.htm'; // 通用说明页
+const LEGAL_LINK_CN = 'https://example.com/legal/blocked-cn';   // 面向 CN/HK/MO 的中文说明页
+const LEGAL_LINK_GENERIC = 'https://example.com/legal/blocked'; // 其他地区通用说明页
 
 /** 地区与 ASN 黑名单 */
 const BLOCKED_COUNTRIES = new Set(['CN', 'HK', 'MO']);
@@ -38,81 +33,97 @@ const BLOCKED_ASNS = new Set<number>([
   9786,59077,135377
 ]);
 
-/** UA 白名单（主流浏览器 + Chromium 家族） */
-function isAllowedBrowserUA(ua: string): boolean {
+/** 可选：是否把 Samsung Internet 视为国际浏览器（默认 false -> 拒绝） */
+const ALLOW_SAMSUNG_INTERNET = false;
+
+/** —— 国际浏览器：正向允许 ————————————————————————————————
+ * 覆盖桌面与移动端（含 iOS WebKit 限制下的 UA 变体）
+ */
+function isInternationalBrowserUA(ua: string): boolean {
   if (!ua) return false;
+  // 先做“国产浏览器”快速排除（见下方 denylist）
+  if (isDomesticOrCustomizedUA(ua)) return false;
+
   ua = ua.toLowerCase();
 
   const isEdge = /\bedg(?:e|ios|a)?\/\d+/i.test(ua); // Edg/ EdgiOS/ EdgA/
   const isChromium = /\bchromium\/\d+/i.test(ua);
-  const isOpera = /\b(?:opr|opios)\/\d+/i.test(ua); // OPR/ OPiOS/
-  const isFirefox = /\bfirefox\/\d+/i.test(ua) || /\bfxios\/\d+/i.test(ua); // FxiOS/
+
+  // Chrome 家族（排除 Edge/Opera 以防重复）
   const isChromeLike =
     (/\b(?:chrome|crios|brave|vivaldi)\/\d+/i.test(ua) || isChromium) &&
-    !isEdge && !isOpera;
+    !/\bedg(?:e|ios|a)?\/\d+/i.test(ua) &&
+    !/\b(?:opr|opios)\/\d+/i.test(ua);
 
-  // 纯正 Safari（排除 Chromium/Edge/Opera 伪装的 Safari）
+  // Opera（桌面/移动 iOS 变体）
+  const isOpera = /\b(?:opr|opios)\/\d+/i.test(ua);
+
+  // Firefox（桌面/iOS）
+  const isFirefox = /\bfirefox\/\d+/i.test(ua) || /\bfxios\/\d+/i.test(ua);
+
+  // 纯正 Safari（排除 Chromium/Edge/Opera 的“Safari/”伪标识）
   const isSafari =
     /\bversion\/\d+(?:\.\d+)*.*\bsafari\/\d+/i.test(ua) &&
     !/\b(?:chrome|crios|edg\w*|opr|opios)\//i.test(ua);
 
-  return isEdge || isOpera || isFirefox || isChromeLike || isChromium || isSafari;
+  // （可选）Samsung Internet
+  const isSamsung = /\bsamsungbrowser\/\d+/i.test(ua);
+
+  return (
+    isEdge ||
+    isChromeLike ||
+    isOpera ||
+    isFirefox ||
+    isSafari ||
+    (ALLOW_SAMSUNG_INTERNET && isSamsung)
+  );
 }
 
-/** —— 程序化客户端例外 ————————————————————————————————
- * 允许常见命令行/探活/SDK UA；也允许你的 App 自定义前缀
+/** —— 国产/定制浏览器：明确拒绝 ————————————————————————————
+ * 常见国产浏览器 & OEM 浏览器 & 聚合容器 UA 关键字（按需扩充）
  */
-const PROGRAMMATIC_UA_REGEX: RegExp[] = [
-  /\bcurl\/\d+/i,
-  /\bwget\/\d+/i,
-  /\bhttpie\/\d+/i,
-  /\bpostman(runtime|agent)?\/\d+/i,
-  /\baxios\/\d+/i,
-  /\bpython-requests\/\d+/i,
-  /\bgo-http-client\/\d+/i,
-  /\bjava\/\d+/i,
-  /\bokhttp\/\d+/i,
-  /\bdart\/\d+/i,
-  /\bnode-fetch\/\d+/i,
-  /\bcloudflare-healthcheck\b/i
-];
+function isDomesticOrCustomizedUA(ua: string): boolean {
+  if (!ua) return true; // 空 UA 一律视为非国际浏览器
+  const s = ua.toLowerCase();
 
-/** 你的移动/桌面 App 自定义 UA 前缀（示例：MyApp/1.2.3） */
-const PROGRAMMATIC_UA_PREFIXES: string[] = [
-  'myapp/',        // ← 改成你的 App UA 前缀（小写比较）
-  'internal-bot/', // 内部机器人
-];
+  // 国产通用/大厂
+  const patterns = [
+    /\bucbrowser\/|\buc\s?applewebkit/i,  // UC
+    /\bqqbrowser\/|\bmqqbrowser\/|\bqq\/\d/i, // QQ Browser/内置
+    /\b2345explorer\/|\bmaxthon\/|\btheworld\/|\blbbrowser\/|\bmetasr\/|\bse\s?360|360se|360ee/i, // 2345/遨游/世界之窗/猎豹/搜狗壳/360
+    /\bsogou(mobile)?browser\/|\bmetasr/i, // 搜狗
+    /\bbaiduboxapp\/|\bbaidubrowser\/|\bbdapp/i, // 百度
+  ];
 
-/** 路径例外：跳过 UA 检查（但仍执行地区/ASN 检查） */
-const UA_BYPASS_PATH_PREFIXES: string[] = [
-  '/healthz',
-  '/-/health',
-  '/status',
-  '/.well-known', // e.g. /.well-known/ai-plugin.json / security.txt / apple-app-site-association
-  '/robots.txt',
-  '/favicon.ico',
-];
+  // 国内 OEM/ROM 浏览器（小米/华为/荣耀/OPPO/vivo/魅族/一加/海信/中兴等）
+  const oem = [
+    /\bmiuibrowser\/|\bxiaomi\/|\bmi\s?browser/i, // 小米
+    /\bhuaweibrowser\/|\bhonorbrowser\/|\bpetal(search)?\/|\bharmony/i, // 华为/荣耀
+    /\boppobrowser\/|\bheytapbrowser\/|\brealmebrowser\//i, // OPPO/HeyTap/realme
+    /\bvivobrowser\/|\bvivo\w*browser\//i, // vivo
+    /\bmeizubrowser\/|\bflyme/i, // 魅族
+    /\boneplus(?:browser)?\//i, // 一加（少见，但保留）
+    /\bztebrowser\/|\bnubia\w*browser\//i, // 中兴/努比亚
+    /\bhisensebrowser\//i, // 海信
+  ];
 
-/** 可选：允许空 UA 的路径（某些负载均衡/探针可能不带 UA） */
-const ALLOW_EMPTY_UA_ON_PATHS: string[] = [
-  '/healthz',
-  '/-/health',
-];
+  // 其他“容器/聚合/代理”类
+  const containers = [
+    /\bquark(?:browser)?\/|\baliapp\(/i, // 夸克/阿里容器
+    /\btoutiaomicroapp\/|\bbytedance|aweme|douyin/i, // 头条/抖音容器
+    /\bmicromessenger\/|\bwxwork\/|\bwechatdevtools\//i, // 微信/企业微信/开发者工具
+    /\bmetamaskmobile\//i, // 钱包内置 WebView（示例）
+  ];
 
-/** 简易前缀匹配 */
-function matchByPrefix(pathname: string, prefixes: string[]): boolean {
-  for (const p of prefixes) {
-    if (pathname.startsWith(p)) return true;
-  }
-  return false;
-}
+  // 命令行/SDK/库（即便国际，也不视为“国际浏览器”）
+  const cliOrSdks = [
+    /\bcurl\/|\bwget\/|\bhttpie\/|\bpostman(?:runtime|agent)?\/|\baxios\/|\bpython-requests\/|\bgo-http-client\/|\bokhttp\/|\bjava\/|\bnode-fetch\//i
+  ];
 
-/** UA 是否属于程序化客户端 */
-function isProgrammaticUA(ua: string): boolean {
-  if (!ua) return false;
-  const lower = ua.toLowerCase();
-  if (PROGRAMMATIC_UA_PREFIXES.some((p) => lower.startsWith(p))) return true;
-  return PROGRAMMATIC_UA_REGEX.some((re) => re.test(ua));
+  const hit =
+    [...patterns, ...oem, ...containers, ...cliOrSdks].some((re) => re.test(s));
+
+  return hit;
 }
 
 function txt(body: string, status = 403, headers: HeadersInit = {}) {
@@ -125,7 +136,7 @@ function txt(body: string, status = 403, headers: HeadersInit = {}) {
   });
 }
 
-/** RFC 7725 合规 451 响应（优先返回 /451.html） */
+/** RFC 7725 合规 451 响应（优先使用 /451.html） */
 async function respond451(url: URL, country?: string) {
   const linkTarget =
     country && (country === 'CN' || country === 'HK' || country === 'MO')
@@ -167,21 +178,20 @@ async function respond451(url: URL, country?: string) {
 export const onRequest: PagesFunction<Env> = async (ctx) => {
   const { request, env } = ctx;
 
-  // 预览/本地放行；生产才严格拦截
+  // 非生产环境：放行
   if (env.ENVIRONMENT && env.ENVIRONMENT !== 'production') {
     return ctx.next();
   }
 
-  // 调试开关：?debug=1 放行
+  // 调试：?debug=1 放行
   const url = new URL(request.url);
   if (url.searchParams.get('debug') === '1') return ctx.next();
 
-  // Cloudflare 元信息
   const cf: any = (request as any).cf || {};
   const country = cf.country as string | undefined;
   const asn = Number(cf.asn);
 
-  // 1) 地区封禁 → 451（RFC 7725 合规；按地区返回说明链接）
+  // 1) 地区封禁 → 451（优先级最高）
   if (country && BLOCKED_COUNTRIES.has(country)) {
     return respond451(url, country);
   }
@@ -193,29 +203,14 @@ export const onRequest: PagesFunction<Env> = async (ctx) => {
     });
   }
 
-  // 3) 路径例外：跳过 UA 校验（但仍执行了上面的地区/ASN 检查）
-  const pathname = url.pathname;
-  const bypassUA = matchByPrefix(pathname, UA_BYPASS_PATH_PREFIXES);
-  if (!bypassUA) {
-    // 4) UA 白名单：对所有请求生效
-    const ua = request.headers.get('User-Agent') || '';
-
-    // （可选）空 UA 在部分路径容忍
-    const allowEmptyUA = !ua && matchByPrefix(pathname, ALLOW_EMPTY_UA_ON_PATHS);
-
-    const pass =
-      allowEmptyUA ||
-      isAllowedBrowserUA(ua) ||
-      isProgrammaticUA(ua);
-
-    if (!pass) {
-      return txt('Forbidden (browser not allowed)', 403, {
-        'Vary': 'User-Agent, Accept, Accept-Encoding'
-      });
-    }
+  // 3) UA 白名单（国际浏览器）→ 通过；否则一律 403
+  const ua = request.headers.get('User-Agent') || '';
+  if (!isInternationalBrowserUA(ua)) {
+    return txt('Forbidden (browser not allowed)', 403, {
+      'Vary': 'User-Agent, Accept, Accept-Encoding'
+    });
   }
 
-  // 其余请求放行
+  // 放行其余请求
   return ctx.next();
 };
-
