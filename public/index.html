@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>daydrop · 上传</title>
+  <meta name="turnstile-sitekey" content="%TURNSTILE_SITE_KEY%">
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+  <script async defer src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>
+</head>
+<body>
+  <header class="header">
+    <img class="logo" src="/favicon.svg" alt="logo"><div class="title">daydrop</div>
+    <a href="/download">去下载页 →</a>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h1>上传文件</h1>
+      <p class="small">文件默认保留 7 天。取件码在上传完成后显示于弹窗。</p>
+
+      <div class="row" style="margin:10px 0">
+        <input id="file" class="input" type="file" />
+      </div>
+
+      <div class="kv" style="margin:10px 0">
+        <div>加密</div>
+        <div class="row"><label class="row"><input id="encrypt" type="checkbox" checked /> <span>端到端（密钥为取件码）</span></label></div>
+        <div>文件</div><div id="info" class="small">未选择</div>
+      </div>
+
+      <div class="row" style="margin:12px 0">
+        <button id="start" class="btn primary">开始上传</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div>© daydrop</div>
+    <a href="https://github.com/jsw-teams/daydrop" target="_blank" rel="noopener">GitHub 项目仓库</a>
+  </footer>
+
+  <!-- 不再预置模态，app.js 会自动注入；保留 toast 容器 -->
+  <div class="toast"></div>
+  <script type="module" src="/app.js"></script>
+  <script type="module" src="/upload.js"></script>
+</body>
+</html>

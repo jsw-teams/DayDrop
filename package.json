@@ -1,0 +1,17 @@
+{
+  "name": "daydrop",
+  "version": "3.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "echo \"Use CF Dashboard or your own dev runner\"",
+    "build": "echo \"Bundle with your preferred tool if needed\""
+  },
+  "dependencies": {
+    "aws4fetch": "^1.0.20"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "@cloudflare/workers-types": "^4.20251014.0"
+  }
+}

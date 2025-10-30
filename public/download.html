@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>daydrop · 下载</title>
+  <meta name="turnstile-sitekey" content="%TURNSTILE_SITE_KEY%">
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/styles.css">
+  <script async defer src="https://challenges.cloudflare.com/turnstile/v0/api.js"></script>
+</head>
+<body>
+  <header class="header">
+    <img class="logo" src="/favicon.svg" alt="logo"><div class="title">daydrop</div>
+    <a href="/">← 去上传页</a>
+  </header>
+
+  <main class="container">
+    <section class="card">
+      <h1>输入取件码</h1>
+      <div class="row" style="margin:10px 0">
+        <input id="code-input" class="input" placeholder="例如：MALO-NIKO-27"/>
+        <button id="fetch" class="btn primary">获取下载链接</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div>© daydrop</div>
+    <a href="https://github.com/jsw-teams/daydrop" target="_blank" rel="noopener">GitHub 项目仓库</a>
+  </footer>
+
+  <div class="toast"></div>
+  <script type="module" src="/app.js"></script>
+  <script type="module" src="/download.js"></script>
+</body>
+</html>

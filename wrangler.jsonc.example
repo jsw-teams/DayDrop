@@ -1,0 +1,25 @@
+{
+  "name": "daydrop",
+  "main": "src/worker.ts",
+  "compatibility_date": "2025-10-01",
+
+  // 绑定 Static Assets：把 /public 目录作为 ASSETS，供 worker.ts 通过 env.ASSETS.fetch() 提供页面
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+
+  // 绑定 KV / R2（ID/名字在控制台资源页能看到）
+  "kv_namespaces": [
+    { "binding": "DAYDROP_KV", "id": "" }
+  ],
+  "r2_buckets": [
+    { "binding": "DAYDROP_BUCKET", "bucket_name": "daydrop" }
+  ],
+
+  // 非机密配置（可写在这；也可去控制台再填）
+  "vars": {
+    "ACCOUNT_ID": "",
+    "BUCKET_NAME": "",
+    "TURNSTILE_SITE_KEY": ""
+  },
+
+  "observability": { "enabled": true }
+}

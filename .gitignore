@@ -1,0 +1,18 @@
+# Node / 构建产物
+node_modules/
+dist/
+.cache/
+*.log
+
+# macOS / 编辑器
+.DS_Store
+*.swp
+.vscode/
+
+# Wrangler & 本地态
+.wrangler/
+wrangler.toml
+wrangler.json
+wrangler.jsonc
+.env
+.env.*

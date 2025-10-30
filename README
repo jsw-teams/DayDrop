@@ -1,0 +1,28 @@
+# daydrop
+
+临时文件存储与取件下载（Cloudflare Workers + R2 + KV）。
+
+## 本地开发
+
+1. 复制样例配置：
+   ```bash
+   cp wrangler.jsonc.example wrangler.jsonc
+   ```
+在 wrangler.jsonc 中按需填写 非敏感字段；敏感变量不要写入文件，通过命令行或控制台设置：
+
+# 建议使用 secret（不会写入文件）
+npx wrangler secret put ACCOUNT_ID
+npx wrangler secret put BUCKET_NAME
+npx wrangler secret put R2_ACCESS_KEY_ID
+npx wrangler secret put R2_SECRET_ACCESS_KEY
+npx wrangler secret put TURNSTILE_SECRET_KEY
+npx wrangler secret put TURNSTILE_SITE_KEY
+
+
+运行开发：
+
+npm i
+npx wrangler dev
+
+部署
+npx wrangler deploy
